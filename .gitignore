@@ -1,0 +1,24 @@
+# Local reference/source checkouts managed as separate repos.
+py2sess/
+rte-rrtmgp/
+
+# Uploaded benchmark/input data. These are intentionally not versioned here.
+benchmark_bundles/
+geocape_data/
+profiles/
+
+# Python caches.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# RTE/PY2SESS comparison build products and raw solver outputs.
+rte_py2sess_comparison/__pycache__/
+rte_py2sess_comparison/rte_driver/build/
+rte_py2sess_comparison/outputs*/*.nc
+rte_py2sess_comparison/outputs*/*.npz
+rte_py2sess_comparison/outputs*/*_raw.csv
+rte_py2sess_comparison/outputs*/rte_timings.csv
+rte_py2sess_comparison/outputs*/py2sess_timings_summary.csv
+rte_py2sess_comparison/outputs*/pyharp_timings_summary.csv
+rte_py2sess_comparison/outputs*/environment*.json
