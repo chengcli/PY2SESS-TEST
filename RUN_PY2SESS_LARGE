@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Forward-only full-spectrum timing runner for the py2sess paper.
+#
+# Expected layout:
+#
+#   py2sess/                         # repo root, run this script here
+#   full_spectrum_benchmark/          # exported input bundle, or pass as $1
+#     benchmark_bundles/
+#       tir_scene_python.yaml
+#       uv_scene_python.yaml
+#       tir_gas_xsec.nc
+#       uv_gas_xsec.nc
+#       tir_reference_outputs.npz
+#       uv_reference_outputs.npz
+#     profiles/
+#       Profiles_1_2006726_0000.dat
+#       Profiles_1_2006726_1500.dat
+#     geocape_data/
+#       ...
+#
+# Usage:
+#
+#   bash scripts/run_forward_only_coauthor_benchmark.sh /path/to/full_spectrum_benchmark
+#
+# This runs forward-only TIR and UV full-spectrum benchmarks. It does not run VJP,
+# derivative checks, OCO-3 replay, or figure-generation scripts.
+
+INPUT_ROOT="${1:-${PY2SESS_FULL_SPECTRUM_INPUT_ROOT:-full_spectrum_benchmark}}"
+REPEATS="${REPEATS:-5}"
+WARMUPS="${WARMUPS:-1}"
+TORCH_THREADS="${TORCH_THREADS:-1}"
+TORCH_DTYPES="${TORCH_DTYPES:-float64}"
+TIMING_KINDS="${TIMING_KINDS:-components,scene-forward}"
+BACKEND_SET="${BACKEND_SET:-all}"
+
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+OUTDIR="outputs/coauthor_forward_${STAMP}"
+mkdir -p "${OUTDIR}"
+
+LOG="${OUTDIR}/terminal_log.txt"
+ENVLOG="${OUTDIR}/environment.txt"
+
+{
+  echo "created_utc=${STAMP}"
+  echo "repo=$(pwd)"
+  echo "input_root=${INPUT_ROOT}"
+  echo "repeats=${REPEATS}"
+  echo "warmups=${WARMUPS}"
+  echo "backend_set=${BACKEND_SET}"
+  echo "timing_kinds=${TIMING_KINDS}"
+  echo "torch_threads=${TORCH_THREADS}"
+  echo "torch_dtypes=${TORCH_DTYPES}"
+  echo
+  echo "=== uname ==="
+  uname -a || true
+  echo
+  echo "=== CPU ==="
+  if command -v lscpu >/dev/null 2>&1; then
+    lscpu || true
+  fi
+  if command -v sysctl >/dev/null 2>&1; then
+    sysctl -n machdep.cpu.brand_string 2>/dev/null || true
+    sysctl -n hw.memsize 2>/dev/null || true
+  fi
+  echo
+  echo "=== GPU ==="
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi || true
+  else
+    echo "nvidia-smi not found"
+  fi
+  echo
+  echo "=== Python packages ==="
+  python - <<'PY'
+import importlib
+import platform
+import sys
+
+print("python:", sys.version.replace("\n", " "))
+print("platform:", platform.platform())
+for name in ("py2sess", "numpy", "torch", "netCDF4", "yaml"):
+    try:
+        module = importlib.import_module(name)
+    except Exception as exc:
+        print(f"{name}: not importable ({type(exc).__name__}: {exc})")
+        continue
+    version = getattr(module, "__version__", "unknown")
+    print(f"{name}: {version}")
+try:
+    import torch
+
+    print("torch.cuda.is_available:", torch.cuda.is_available())
+    print("torch.version.cuda:", torch.version.cuda)
+    if torch.cuda.is_available():
+        print("torch.cuda.device_count:", torch.cuda.device_count())
+        for idx in range(torch.cuda.device_count()):
+            print(f"torch.cuda.device[{idx}]:", torch.cuda.get_device_name(idx))
+except Exception:
+    pass
+PY
+} | tee "${ENVLOG}"
+
+export PYTHONPATH="${PYTHONPATH:-}:$(pwd)/src"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export VECLIB_MAXIMUM_THREADS="${VECLIB_MAXIMUM_THREADS:-1}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
+
+{
+  echo
+  echo "=== Running py2sess forward-only full-spectrum benchmark ==="
+  python scripts/benchmark_full_spectrum_rt.py \
+    --input-root "${INPUT_ROOT}" \
+    --output-dir "${OUTDIR}" \
+    --systems python \
+    --cases tir,uv \
+    --timing-kinds "${TIMING_KINDS}" \
+    --backend-set "${BACKEND_SET}" \
+    --torch-dtypes "${TORCH_DTYPES}" \
+    --torch-threads "${TORCH_THREADS}" \
+    --repeats "${REPEATS}" \
+    --warmups "${WARMUPS}"
+  echo
+  echo "=== Outputs ==="
+  ls -lh "${OUTDIR}"
+  echo
+  echo "Please send back this whole output folder:"
+  echo "  ${OUTDIR}"
+} 2>&1 | tee "${LOG}"
